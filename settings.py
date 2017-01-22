@@ -4,4 +4,5 @@ resource_path = 'resources'
 # you can look languages codes here - https://tech.yandex.ru/translate/doc/dg/concepts/api-overview-docpage/
 main_lang = 'en'
 to_langs = ['ru', 'tt', 'ja']
+parse_regexp = r'Text="{local:Translate (\w+)}"'
 
