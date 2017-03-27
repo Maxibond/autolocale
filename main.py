@@ -17,19 +17,27 @@ def find_words_to_translate():
     settings.parse_regexp
     :return: list найденных слов
     """
-    regexp = settings.parse_regexp
+    regexps = settings.parse_regexp
+    formats = settings.parse_regexp.keys()
     path_to_find = settings.rootpath
-    regexp = re.compile(regexp, re.I | re.U)
+    # компилируем регулярные выражения
+    regexps = {form: re.compile(regexp, re.I | re.U) for form, regexp in regexps.items()}
     result = set()
     for root, dirs, files in os.walk(path_to_find):
         for file_name in files:
-            if '.xaml' not in file_name:
+            # опеределение формата, если находим, то будем иметь опред. регулярное выражение, иначе пропустим
+            current_format = None
+            for form in formats:
+                if form in file_name:
+                    current_format = form
+                    break
+            if not current_format:
                 continue
             # прочитываем файлы и по регулярке набираем слова для перевода
             with open(os.path.join(root, file_name)) as file:
                 file_text_lines = file.readlines()
                 for line in file_text_lines:
-                    result |= set(regexp.findall(line))
+                    result |= set(regexps[current_format].findall(line))
     return list(result)
 
 
