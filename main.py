@@ -9,6 +9,8 @@
 import os
 import re
 import settings
+import requests
+import json
 
 
 def find_words_to_translate():
@@ -41,38 +43,129 @@ def find_words_to_translate():
     return list(result)
 
 
-def translate_yandex(words, lang):
-    """
-    Используя settings.apikey подключается к Yandex Translate API и переводит слова
-    :param words: list слов которые нужно перевести
-    :param lang: string код языка, на который будет происходить перевод
-    :return: list переведенных слов
-    """
-    import requests
-    import json
-    api = settings.apikey
-    request_url = "https://translate.yandex.net/api/v1.5/tr.json/translate?key={0}&lang={1}".format(api, lang)
-    request_url += ('&text=%s' * len(words)) % tuple(words)
-    result = requests.post(request_url)
-    result = json.loads(result.text)
-    return map(lambda x: x.strip(), result['text'])
+###############
+#
+#   API
+#
+###############
 
 
-def translate_google(words, lang):
+#
+#  Yandex
+#
+
+class Yandex:
+
+    @staticmethod
+    def check_code(fn):
+        def wrapper(*args, **kwargs):
+            code, result = fn(*args, **kwargs)
+            if code == '401':
+                raise Exception('Yandex: Invalid API key.')
+            elif code == '402':
+                raise Exception('Yandex: API key have banned.')
+            elif code == '404':
+                raise Exception('Yandex: Daily volume limit exceeded.')
+            elif code == '413':
+                raise Exception('Yandex: Text has a very big size.')
+            elif code == '422':
+                raise Exception('Yandex: Text can\'n be translated.')
+            elif code == '501':
+                raise Exception('Yandex: Specified translation direction is not supported.')
+            return result
+        return wrapper
+
+    @staticmethod
+    @check_code
+    def translate(words, lang):
+        """
+        Используя settings.apikey подключается к Yandex Translate API и переводит слова
+        :param words: list слов которые нужно перевести
+        :param lang: string код языка, на который будет происходить перевод
+        :return: tuple: code, list переведенных слов
+        """
+        api = settings.apikey
+        request_url = requests.get('https://translate.yandex.net/api/v1.5/tr.json/translate'
+                                   f'?key={api}&lang={lang}')
+        request_url += ''.join(f'&text={word}' for word in words)
+        result = requests.get(request_url)
+        result = json.loads(result.text)
+        return result['code'], map(lambda x: x.strip(), result['text'])
+
+    @staticmethod
+    @check_code
+    def detect_lang(words):
+        """
+        Используя settings.apikey подключается к Yandex Translate API и определяет язык
+        :param words: list слов, для которых нужно определить язык
+        :return: tuple: code, str код языка
+        """
+        api = settings.apikey
+        request_url = requests.get("https://translate.yandex.net/api/v1.5/tr.json/detect"
+                                   f"?key={api}")
+        request_url += ''.join(f'&text={word}' for word in words)
+        result = requests.get(request_url)
+        result = json.loads(result.text)
+        if not result['lang']:
+            raise Exception("Can't detect a language. Please, set up a language in settings.")
+        return result['code'], result['lang']
+
+
+#
+#  Google
+#
+
+class Google:
+
+    @staticmethod
+    def translate(words, lang):
+        """
+        Используя settings.apikey подключается к Google Translate API и переводит слова
+        :param words: list слов которые нужно перевести
+        :param lang: string код языка, на который будет происходить перевод
+        :return: list переведенных слов
+        """
+        api = settings.apikey
+        request_url = "https://translation.googleapis.com/language/translate/v2?key={0}&target={1}".format(api, lang)
+        request_url += ('&q=%s' * len(words)) % tuple(words)
+        result = requests.post(request_url)
+        result = json.loads(result.text)
+        return map(lambda x: x['translatedText'].strip(), result['data']['translations'])
+
+    @staticmethod
+    def detect_lang(words):
+        """
+        Используя settings.apikey подключается к Google Translate API и определяет язык
+        :param words: list слов, для которых нужно определить язык
+        :return: str код языка
+        """
+        api = settings.apikey
+        request_url = "https://translation.googleapis.com/language/translate/v2?key={0}&target={1}".format(api, lang)
+        request_url += '&q=%s' % ', '.join(words)
+        result = requests.post(request_url)
+        result = json.loads(result.text)
+        return result['data']['detections']['language'].strip()
+
+
+API_SERVICES = {
+    'yandex': Yandex,
+    'google': Google,
+}
+
+###############
+#
+#  END API
+#
+###############
+
+def detect_lang(words):
     """
-    Используя settings.apikey подключается к Google Translate API и переводит слова
-    :param words: list слов которые нужно перевести
-    :param lang: string код языка, на который будет происходить перевод
-    :return: list переведенных слов
+    Используя settings.apiservice подключается к определённому API и определяет язык
+    :param words: list слов, для которых нужно определить язык
+    :return: str код языка
     """
-    import requests
-    import json
-    api = settings.apikey
-    request_url = "https://translation.googleapis.com/language/translate/v2?key={0}&target={1}".format(api, lang)
-    request_url += ('&q=%s' * len(words)) % tuple(words)
-    result = requests.post(request_url)
-    result = json.loads(result.text)
-    return map(lambda x: x['translatedText'].strip(), result['data']['translations'])
+    service = settings.apiservice
+    return API_SERVICES[service].detect_lang(words)
 
 
 def translate(words, lang):
@@ -83,10 +176,7 @@ def translate(words, lang):
     :return: list переведенных слов
     """
     service = settings.apiservice
-    return {
-        'yandex': translate_yandex,
-        'google': translate_google,
-    }[service](words, lang)
+    return API_SERVICES[service].translate(words, lang)
 
 
 def _create_path(resource_path):
@@ -116,6 +206,8 @@ def generate_resource_files(words):
     :param words: list слов, которые нужно перевести и создать файлы
     """
     from_lang = settings.main_lang
+    if not from_lang:
+        from_lang = detect_lang(words)
     to_langs = settings.to_langs
     _create_path(settings.resource_path)
     for to_lang in to_langs:
