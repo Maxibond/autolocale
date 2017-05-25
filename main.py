@@ -103,7 +103,7 @@ class Yandex:
         api = settings.apikey
         request_url = requests.get("https://translate.yandex.net/api/v1.5/tr.json/detect"
                                    f"?key={api}")
-        request_url += ''.join(f'&text={word}' for word in words)
+        request_url += "&text=%s" % ''.join(words)
         result = requests.get(request_url)
         result = json.loads(result.text)
         if not result['lang']:
@@ -126,8 +126,9 @@ class Google:
         :return: list переведенных слов
         """
         api = settings.apikey
-        request_url = "https://translation.googleapis.com/language/translate/v2?key={0}&target={1}".format(api, lang)
-        request_url += ('&q=%s' * len(words)) % tuple(words)
+        request_url = "https://translation.googleapis.com/language/translate/v2" \
+                      f"?key={api}&target={lang}"
+        request_url += ''.join(f'&q={word}' for word in words)
         result = requests.post(request_url)
         result = json.loads(result.text)
         return map(lambda x: x['translatedText'].strip(), result['data']['translations'])
@@ -140,7 +141,8 @@ class Google:
         :return: str код языка
         """
         api = settings.apikey
-        request_url = "https://translation.googleapis.com/language/translate/v2?key={0}&target={1}".format(api, lang)
+        request_url = "POST https://translation.googleapis.com/language/translate/v2/detect" \
+                      f"?key={api}"
         request_url += '&q=%s' % ', '.join(words)
         result = requests.post(request_url)
         result = json.loads(result.text)
