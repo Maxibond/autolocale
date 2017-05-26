@@ -7,39 +7,69 @@
 # 4. Используя Yandex API переводить %s
 
 import os
+import sys
+import time
 import re
 import settings
 import requests
 import json
 
 
-def find_words_to_translate():
-    """
-    Проходит по дереву, начиная из каталога settings.rootpath и парсит файлы xaml в поисках регулярного выражения
-    settings.parse_regexp
-    :return: list найденных слов
-    """
-    regexps = settings.parse_regexp
-    formats = settings.parse_regexp.keys()
-    path_to_find = settings.rootpath
-    # компилируем регулярные выражения
-    regexps = {form: re.compile(regexp, re.I | re.U) for form, regexp in regexps.items()}
-    result = set()
-    for root, dirs, files in os.walk(path_to_find):
-        for file_name in files:
-            # опеределение формата, если находим, то будем иметь опред. регулярное выражение, иначе пропустим
+def detect_modified_files(path, formats, cash=None):
+    if cash is None:
+        cash = {}
+    modified = []
+    for root, dirs, files in os.walk(path):
+        for name in files:
+            # опеределение формата, если находим, берём его дату изменения
             current_format = None
             for form in formats:
-                if form in file_name:
+                if name.endswith(form):
                     current_format = form
                     break
             if not current_format:
                 continue
-            # прочитываем файлы и по регулярке набираем слова для перевода
-            with open(os.path.join(root, file_name)) as file:
-                file_text_lines = file.readlines()
-                for line in file_text_lines:
-                    result |= set(regexps[current_format].findall(line))
+            file_name = os.path.join(root, name)
+            mtime = os.stat(file_name).st_mtime
+            if cash.get(file_name) != mtime:
+                modified.append(file_name)
+            cash[file_name] = mtime
+    return modified, cash
+
+
+def run_watcher():
+    """
+    Запускает наблюдателя, который следит за изменениями необходимых файлов и запускает перевод
+    """
+    WATCHER_DELAY = 2
+    root_path = settings.rootpath
+    formats = settings.parse_regexp.keys()
+    cash_files = {}  # ключ: имя файла, значение: время изменения
+    cash_words = {}  # ключ: имя файла, значение: словарь ключ и слово
+    while True:
+        modified, cash_files = detect_modified_files(root_path, formats, cash_files)
+        # process(modified)
+        print(modified)
+        # datetime.fromtimestamp(int(os.stat('main.py').st_mtime))
+        time.sleep(WATCHER_DELAY)
+
+
+def find_words_to_translate(files):
+    """
+    :param files: список файлов, где нужно искать слова
+    Проходит по дереву, начиная из каталога settings.rootpath и парсит файлы xaml в поисках регулярного выражения
+    settings.parse_regexp
+    :return: list найденных слов
+    """
+    regexps = {form: re.compile(regexp, re.I | re.U) for form, regexp in settings.parse_regexp.items()}
+    result = set()
+    # прочитываем файлы и по регулярке набираем слова для перевода
+    for file_name in files:
+        with open(file_name) as file:
+            file_text_lines = file.readlines()
+            format = file_name.split('.')[-1]
+            for line in file_text_lines:
+                result |= set(regexps[format].findall(line))
     return list(result)
 
 
@@ -219,14 +249,18 @@ def generate_resource_files(words):
     _generate_resource_file(words, words, '%s-%s' % (from_lang, from_lang))  # создаёт файл и на основной язык
 
 
-def process():
+def process(files=None):
     """
+    :param files: список файлов или None, если нужно искать все
     Главная функция локализации
     в результате функция создаст .resx-файлы
     """
-    words_to_translate = find_words_to_translate()
+    if files is None:
+        files, _ = detect_modified_files(settings.rootpath, settings.parse_regexp.keys())
+    words_to_translate = find_words_to_translate(files)
     generate_resource_files(words_to_translate)
 
-
 if __name__ == '__main__':
+    if len(sys.argv) == 2 and sys.argv[1] == '--watcher':
+        run_watcher()
     process()

@@ -7,8 +7,7 @@ apiservice = 'yandex'  # 'google', 'yandex'
 apikey = 'Type your api key here'
 
 # i/o directories
-rootpath = 'files_to_translate'
-file_name = 'en.po'  # These filenames will be sought-for
+rootpath = '.'
 resource_path = 'resources'
 
 # you can look supported languages codes of api services at here -
