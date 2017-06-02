@@ -21,13 +21,7 @@ def detect_modified_files(path, formats, cash=None):
     modified = []
     for root, dirs, files in os.walk(path):
         for name in files:
-            # опеределение формата, если находим, берём его дату изменения
-            current_format = None
-            for form in formats:
-                if name.endswith(form):
-                    current_format = form
-                    break
-            if not current_format:
+            if name.endswith(settings.file_format):
                 continue
             file_name = os.path.join(root, name)
             mtime = os.stat(file_name).st_mtime
@@ -59,18 +53,17 @@ def find_words_to_translate(files):
     :param files: список файлов, где нужно искать слова
     Проходит по дереву, начиная из каталога settings.rootpath и парсит файлы xaml в поисках регулярного выражения
     settings.parse_regexp
-    :return: list найденных слов
+    :return: dict найденного блока, ключа и значения
     """
     regexps = {form: re.compile(regexp, re.I | re.U) for form, regexp in settings.parse_regexp.items()}
-    result = set()
     # прочитываем файлы и по регулярке набираем слова для перевода
+    result = []
     for file_name in files:
+        file_format = settings.file_format
         with open(file_name) as file:
-            file_text_lines = file.readlines()
-            format = file_name.split('.')[-1]
-            for line in file_text_lines:
-                result |= set(regexps[format].findall(line))
-    return list(result)
+            file_text = file.read()
+            result = [m.groupdict() for m in regexps[file_format].finditer(file_text)]
+    return result
 
 
 ###############
@@ -84,26 +77,26 @@ def find_words_to_translate(files):
 #  Yandex
 #
 
-class Yandex:
+def check_code(fn):
+    def wrapper(*args, **kwargs):
+        code, result = fn(*args, **kwargs)
+        if code == '401':
+            raise Exception('Yandex: Invalid API key.')
+        elif code == '402':
+            raise Exception('Yandex: API key have banned.')
+        elif code == '404':
+            raise Exception('Yandex: Daily volume limit exceeded.')
+        elif code == '413':
+            raise Exception('Yandex: Text has a very big size.')
+        elif code == '422':
+            raise Exception('Yandex: Text can\'n be translated.')
+        elif code == '501':
+            raise Exception('Yandex: Specified translation direction is not supported.')
+        return result
 
-    @staticmethod
-    def check_code(fn):
-        def wrapper(*args, **kwargs):
-            code, result = fn(*args, **kwargs)
-            if code == '401':
-                raise Exception('Yandex: Invalid API key.')
-            elif code == '402':
-                raise Exception('Yandex: API key have banned.')
-            elif code == '404':
-                raise Exception('Yandex: Daily volume limit exceeded.')
-            elif code == '413':
-                raise Exception('Yandex: Text has a very big size.')
-            elif code == '422':
-                raise Exception('Yandex: Text can\'n be translated.')
-            elif code == '501':
-                raise Exception('Yandex: Specified translation direction is not supported.')
-            return result
-        return wrapper
+    return wrapper
+
+class Yandex:
 
     @staticmethod
     @check_code
@@ -190,25 +183,49 @@ API_SERVICES = {
 #
 ###############
 
-def detect_lang(words):
+
+def translate_blocks(blocks):
+    """
+    Переводит блоки
+    :param blocks: list of dict <block, key, value>
+    :return: translated_blocks: dict <lang> of list of dict <block, key, value>
+    """
+    from_lang = settings.main_lang
+    if not from_lang:
+        settings.main_lang = detect_lang(blocks)
+    # todo: add from_lang for translating
+    to_langs = settings.to_langs
+    translated_blocks = {}
+    for to_lang in to_langs:
+        translated_blocks[to_lang] = translate(blocks, to_lang)
+    return translated_blocks
+
+
+def detect_lang(blocks):
     """
     Используя settings.apiservice подключается к определённому API и определяет язык
-    :param words: list слов, для которых нужно определить язык
+    :param blocks: list блоков, для которых нужно определить язык
     :return: str код языка
     """
     service = settings.apiservice
+    words = [x['value'] for x in blocks][:5]
     return API_SERVICES[service].detect_lang(words)
 
 
-def translate(words, lang):
+def translate(blocks, lang):
     """
     Используя settings.apiservice подключается к определённому API и переводит слова
-    :param words: list слов которые нужно перевести
+    :param blocks: list блоков которые нужно перевести
     :param lang: string код языка, на который будет происходить перевод
-    :return: list переведенных слов
+    :return: list переведенных блоков
     """
     service = settings.apiservice
-    return API_SERVICES[service].translate(words, lang)
+    words = [x['value'] for x in blocks]
+    translated_words = API_SERVICES[service].translate(words, lang)
+    translated_blocks = list(blocks)
+    for block, new_value in zip(translated_blocks, translated_words):
+        block['block'] = block['block'].replace(f"msgstr {block['value']}", f"msgstr {new_value}")
+    return blocks
 
 
 def _create_path(resource_path):
@@ -220,33 +237,29 @@ def _create_path(resource_path):
         os.makedirs(resource_path)
 
 
-def _generate_resource_file(words, translated_words, coding_name):
+def _generate_resource_file(blocks, coding_name):
     """
-    Создаёт resx-файл, формат main_language_word=translated_word с именем main_lang-to_lang.resx
-    :param words: list слов первого языка
-    :param translated_words: list слов второго языка
+    Создаёт файл того же формата
+    :param blocks: list блоков
     :param coding_name: string имя файла
     """
-    with open(os.path.join(settings.resource_path, '%s.resx' % coding_name), 'w', encoding='utf-8') as resource_file:
-        for _from, _to in zip(words, translated_words):
-            resource_file.write('%s=%s\n' % (_from, _to))
+    with open(os.path.join(settings.resource_path, f'{coding_name}.{settings.file_format}'),
+              'w', encoding='utf-8') as resource_file:
+        for block in blocks:
+            resource_file.write(block['block'])
 
 
-def generate_resource_files(words):
+def generate_resource_files(blocks):
     """
-    Функция создающая все resx файлы на перведенные языки.
-    :param words: list слов, которые нужно перевести и создать файлы
+    Функция создающая все файлы локализации на перведенные языки.
+    :param blocks: list блоков, которые нужно перевести и создать файлы
     """
     from_lang = settings.main_lang
-    if not from_lang:
-        from_lang = detect_lang(words)
     to_langs = settings.to_langs
     _create_path(settings.resource_path)
     for to_lang in to_langs:
         coding_name = '%s-%s' % (from_lang, to_lang)
-        translated_words = translate(words, coding_name)
-        _generate_resource_file(words, translated_words, coding_name)
-    _generate_resource_file(words, words, '%s-%s' % (from_lang, from_lang))  # создаёт файл и на основной язык
+        _generate_resource_file(blocks, coding_name)
 
 
 def process(files=None):
@@ -257,8 +270,9 @@ def process(files=None):
     """
     if files is None:
         files, _ = detect_modified_files(settings.rootpath, settings.parse_regexp.keys())
-    words_to_translate = find_words_to_translate(files)
-    generate_resource_files(words_to_translate)
+    blocks_to_translate = find_words_to_translate(files)
+    translated_blocks = translate_blocks(blocks_to_translate)
+    generate_resource_files(translated_blocks)
 
 if __name__ == '__main__':
     if len(sys.argv) == 2 and sys.argv[1] == '--watcher':
