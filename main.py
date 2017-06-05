@@ -1,11 +1,4 @@
 # coding=utf
-
-# 1. Проходить по всему проекту с форматом xaml (обход по дереву)
-# 2. Находить слова по регулярному выражению
-# 3. Создать по пути в настройках файлы resx
-# Имя=Перевод
-# 4. Используя Yandex API переводить %s
-
 import os
 import sys
 import time
@@ -15,13 +8,13 @@ import requests
 import json
 
 
-def detect_modified_files(path, formats, cash=None):
+def detect_modified_files(path, cash=None):
     if cash is None:
         cash = {}
     modified = []
     for root, dirs, files in os.walk(path):
         for name in files:
-            if name.endswith(settings.file_format):
+            if not name.endswith(settings.file_format):
                 continue
             file_name = os.path.join(root, name)
             mtime = os.stat(file_name).st_mtime
@@ -31,20 +24,46 @@ def detect_modified_files(path, formats, cash=None):
     return modified, cash
 
 
+def exclude_cashed(blocks, cash):
+    main_lang_cash = list(cash[settings.main_lang])
+    # cash 1 2 3 4 5 , blocks 5 6 1 3 4 7
+    # cash 1 3 4 5, blocks 6 7
+
+    # cash 2, blocks 6 7 after this block
+    for idx_block, block in enumerate(list(blocks)):
+        for idx_cash_block, cash_block in enumerate(main_lang_cash):
+            if block['key'] == cash_block['key'] and block['value'] == cash_block['value']:
+                del blocks[idx_block]
+                del main_lang_cash[idx_cash_block]
+                continue
+
+    # clear non actual blocks in cash
+    for cash_block in main_lang_cash:
+        for lang in cash:
+            idx = cash[lang].index(cash_block)
+            del cash[lang][idx]
+
+    return blocks, cash
+
+
+def update_cash(blocks, cash):
+    # en: 2, ru: 2, tt: 2 ; en: 1, ru: 1, tt: 1
+    for lang in blocks:
+        cash[lang].append(blocks[lang])
+    return cash
+
+
 def run_watcher():
     """
     Запускает наблюдателя, который следит за изменениями необходимых файлов и запускает перевод
     """
     WATCHER_DELAY = 2
     root_path = settings.rootpath
-    formats = settings.parse_regexp.keys()
     cash_files = {}  # ключ: имя файла, значение: время изменения
     cash_words = {}  # ключ: имя файла, значение: словарь ключ и слово
     while True:
-        modified, cash_files = detect_modified_files(root_path, formats, cash_files)
-        # process(modified)
-        print(modified)
-        # datetime.fromtimestamp(int(os.stat('main.py').st_mtime))
+        modified, cash_files = detect_modified_files(root_path, cash_files)
+        cash_words = process(modified, cash_words)
         time.sleep(WATCHER_DELAY)
 
 
@@ -262,17 +281,23 @@ def generate_resource_files(blocks):
         _generate_resource_file(blocks, coding_name)
 
 
-def process(files=None):
+def process(files=None, cash=None):
     """
     :param files: список файлов или None, если нужно искать все
+    :param cash: список сохранённых блоков
     Главная функция локализации
-    в результате функция создаст .resx-файлы
+    в результате функция создаст файлы локализации
     """
     if files is None:
-        files, _ = detect_modified_files(settings.rootpath, settings.parse_regexp.keys())
+        files, _ = detect_modified_files(settings.rootpath)
     blocks_to_translate = find_words_to_translate(files)
+    if isinstance(cash, dict):
+        blocks_to_translate, cash = exclude_cashed(blocks_to_translate, cash)
     translated_blocks = translate_blocks(blocks_to_translate)
     generate_resource_files(translated_blocks)
+    if isinstance(cash, dict):
+        return update_cash(translated_blocks, cash)
+
 
 if __name__ == '__main__':
     if len(sys.argv) == 2 and sys.argv[1] == '--watcher':
