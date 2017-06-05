@@ -7,6 +7,9 @@ import settings
 import requests
 import json
 
+# TODO: если в сгенерированном файле поправят перевод, то он перезатрётся
+# TODO: поиск по имени файла в папках, а не просто формат, а то будет экспоненциальный рост
+
 
 def detect_modified_files(path, cash=None):
     if cash is None:
@@ -293,9 +296,10 @@ def process(files=None, cash=None):
     if isinstance(cash, dict):
         blocks_to_translate, cash = exclude_cashed(blocks_to_translate, cash)
     translated_blocks = translate_blocks(blocks_to_translate)
-    generate_resource_files(translated_blocks)
     if isinstance(cash, dict):
-        return update_cash(translated_blocks, cash)
+        translated_blocks = update_cash(translated_blocks, cash)
+    generate_resource_files(translated_blocks)
+    return cash
 
 
 if __name__ == '__main__':
