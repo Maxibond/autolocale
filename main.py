@@ -74,14 +74,13 @@ def find_words_to_translate(files):
     settings.parse_regexp
     :return: dict найденного блока, ключа и значения
     """
-    regexps = {form: re.compile(regexp, re.I | re.U) for form, regexp in settings.parse_regexp.items()}
+    regexp = re.compile(settings.parse_regexp[settings.file_format], re.I | re.U)
     # прочитываем файлы и по регулярке набираем слова для перевода
     result = []
     for file_name in files:
-        file_format = settings.file_format
         with open(file_name) as file:
             file_text = file.read()
-            result = [m.groupdict() for m in regexps[file_format].finditer(file_text)]
+            result = [m.groupdict() for m in regexp.finditer(file_text)]
     return result
 
 
