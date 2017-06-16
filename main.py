@@ -7,11 +7,14 @@ import settings
 import requests
 import json
 
-# TODO: если в сгенерированном файле поправят перевод, то он перезатрётся
-# TODO: поиск по имени файла в папках, а не просто формат, а то будет экспоненциальный рост
-
 
 def detect_modified_files(path, cash=None):
+    """
+    Обнаруживает изменённые файлы
+    :param path: string путь, где искать файлы
+    :param cash: dict <key имя файла, value время последнего изменения> 
+    :return: tuple <list изменённых имён файлов, type param cash>
+    """
     if cash is None:
         cash = {}
     modified = []
@@ -28,11 +31,20 @@ def detect_modified_files(path, cash=None):
 
 
 def exclude_cashed(blocks, cash):
+    """
+    Исключает из блоков, те которые есть в кэше, а в кэше исключает те, которых больше нет в блоках
+    :param blocks: list of dict <lang, <block, key, value>>
+    :param cash: список сохранённых блоков
+    :return: обновлённые блоки и кэш
+    Example:
+        Input
+        # cash 1 2 3 4 5 , blocks 5 6 1 3 4 7
+        Output
+        # cash 1 3 4 5, blocks 6 7
+    """
     main_lang_cash = list(cash[settings.main_lang])
-    # cash 1 2 3 4 5 , blocks 5 6 1 3 4 7
-    # cash 1 3 4 5, blocks 6 7
 
-    # cash 2, blocks 6 7 after this block
+    # обновление блоков
     for idx_block, block in enumerate(list(blocks)):
         for idx_cash_block, cash_block in enumerate(main_lang_cash):
             if block['key'] == cash_block['key'] and block['value'] == cash_block['value']:
@@ -40,7 +52,7 @@ def exclude_cashed(blocks, cash):
                 del main_lang_cash[idx_cash_block]
                 continue
 
-    # clear non actual blocks in cash
+    # очистка неактуальных блоков в кэше
     for cash_block in main_lang_cash:
         for lang in cash:
             idx = cash[lang].index(cash_block)
@@ -50,7 +62,9 @@ def exclude_cashed(blocks, cash):
 
 
 def update_cash(blocks, cash):
-    # en: 2, ru: 2, tt: 2 ; en: 1, ru: 1, tt: 1
+    """
+    Обновление кэша переведёнными блоками 
+    """
     for lang in blocks:
         cash[lang].append(blocks[lang])
     return cash
@@ -62,8 +76,8 @@ def run_watcher():
     """
     WATCHER_DELAY = 2
     root_path = settings.rootpath
-    cash_files = {}  # ключ: имя файла, значение: время изменения
-    cash_words = {}  # ключ: имя файла, значение: словарь ключ и слово
+    cash_files = {}
+    cash_words = {}
     while True:
         modified, cash_files = detect_modified_files(root_path, cash_files)
         cash_words = process(modified, cash_words)
@@ -73,16 +87,16 @@ def run_watcher():
 def find_words_to_translate(files):
     """
     :param files: список файлов, где нужно искать слова
-    Проходит по дереву, начиная из каталога settings.rootpath и парсит файлы xaml в поисках регулярного выражения
-    settings.parse_regexp
+    Проходит по дереву, начиная из каталога settings.rootpath и парсит файлы формата,
+     указанного в настройках при помощи регулярного выражения
     :return: dict найденного блока, ключа и значения
     """
     regexp = re.compile(settings.parse_regexp[settings.file_format], re.I | re.U)
-    # прочитываем файлы и по регулярке набираем слова для перевода
     result = []
     for file_name in files:
         with open(file_name) as file:
             file_text = file.read()
+            # в файле находим текст по регулярному выражению
             result = [m.groupdict() for m in regexp.finditer(file_text)]
     return result
 
@@ -116,6 +130,7 @@ def check_code(fn):
         return result
 
     return wrapper
+
 
 class Yandex:
 
@@ -196,6 +211,8 @@ class Google:
 API_SERVICES = {
     'yandex': Yandex,
     'google': Google,
+    # При желании можно добавить сюда новый сервис перевода,
+    #  а выше реализовать класс с методами translate и detect_lang
 }
 
 ###############
@@ -214,7 +231,6 @@ def translate_blocks(blocks):
     from_lang = settings.main_lang
     if not from_lang:
         settings.main_lang = detect_lang(blocks)
-    # todo: add from_lang for translating
     to_langs = settings.to_langs
     translated_blocks = {}
     for to_lang in to_langs:
@@ -229,8 +245,15 @@ def detect_lang(blocks):
     :return: str код языка
     """
     service = settings.apiservice
-    words = [x['value'] for x in blocks][:5]
+    words = [x['value'] for x in blocks][:5]  # берётся небольшой и достаточный кусок данных для определения языка
     return API_SERVICES[service].detect_lang(words)
+
+
+def _update_block(block, new_value):
+    string_regexp_value = re.findall(r'\(\?P\<value\>', block['block'])
+
+
+    return block['block'].replace(f"msgstr {block['value']}", f"msgstr {new_value}")
 
 
 def translate(blocks, lang):
@@ -245,7 +268,7 @@ def translate(blocks, lang):
     translated_words = API_SERVICES[service].translate(words, lang)
     translated_blocks = list(blocks)
     for block, new_value in zip(translated_blocks, translated_words):
-        block['block'] = block['block'].replace(f"msgstr {block['value']}", f"msgstr {new_value}")
+        block['block'] = _update_block(block, new_value)
     return blocks
 
 
