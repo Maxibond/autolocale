@@ -7,6 +7,8 @@ import settings
 import requests
 import json
 
+REGEXP = re.compile(settings.parse_regexp[settings.file_format], re.I | re.U)
+
 
 def detect_modified_files(path, cash=None):
     """
@@ -91,13 +93,12 @@ def find_words_to_translate(files):
      указанного в настройках при помощи регулярного выражения
     :return: dict найденного блока, ключа и значения
     """
-    regexp = re.compile(settings.parse_regexp[settings.file_format], re.I | re.U)
     result = []
     for file_name in files:
         with open(file_name) as file:
             file_text = file.read()
             # в файле находим текст по регулярному выражению
-            result = [m.groupdict() for m in regexp.finditer(file_text)]
+            result = [m.groupdict() for m in REGEXP.finditer(file_text)]
     return result
 
 
@@ -250,10 +251,14 @@ def detect_lang(blocks):
 
 
 def _update_block(block, new_value):
-    string_regexp_value = re.findall(r'\(\?P\<value\>', block['block'])
-
-
-    return block['block'].replace(f"msgstr {block['value']}", f"msgstr {new_value}")
+    """
+    Обновить блок новым значением
+    :param block: dict <block, key, value>
+    :param new_value: string
+    :return: type param block
+    """
+    block['block'] = re.sub(REGEXP, new_value, block['block'])
+    return block
 
 
 def translate(blocks, lang):
@@ -268,7 +273,7 @@ def translate(blocks, lang):
     translated_words = API_SERVICES[service].translate(words, lang)
     translated_blocks = list(blocks)
     for block, new_value in zip(translated_blocks, translated_words):
-        block['block'] = _update_block(block, new_value)
+        _update_block(block, new_value)
     return blocks
 
 
